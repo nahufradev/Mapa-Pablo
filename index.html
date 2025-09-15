@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Mapa Pablo</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
+<style>
+  body { margin:0; padding:0; }
+  #map { height: 100vh; width: 100%; }
+  .leaflet-top.leaflet-right { top: 70px; }
+  .custom-button {
+    background: white; padding: 6px 12px; margin: 2px;
+    border-radius: 4px; cursor: pointer; font-weight: bold;
+    box-shadow: 0 1px 5px rgba(0,0,0,0.65);
+  }
+  .custom-button:hover { background: #f0f0f0; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+<script>
+const map = L.map('map').setView([-26.8316, -65.2176], 13);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19, attribution: '&copy; OpenStreetMap'
+}).addTo(map);
+
+const drawnItems = new L.FeatureGroup();
+map.addLayer(drawnItems);
+
+fetch('map.geojson')
+  .then(res => res.json())
+  .then(data => {
+    L.geoJSON(data, {
+      pointToLayer: function(feature, latlng) {
+        return L.circleMarker(latlng, { radius:6, color:'red', fillOpacity:0.8 });
+      },
+      style: { color:'#3388ff', weight:2, fillOpacity:0.2 }
+    }).addTo(drawnItems);
+  });
+
+const drawControl = new L.Control.Draw({
+  position: 'topleft',
+  draw: {
+    polygon:true, rectangle:false, polyline:false, circle:false,
+    marker: true
+  },
+  edit: { featureGroup: drawnItems, remove:true }
+});
+map.addControl(drawControl);
+
+map.on(L.Draw.Event.CREATED, function (event) {
+  let layer = event.layer;
+  if(layer instanceof L.Marker){
+    const latlng = layer.getLatLng();
+    layer = L.circleMarker(latlng, { radius:6, color:'red', fillOpacity:0.8 });
+  }
+  drawnItems.addLayer(layer);
+});
+
+const CustomControl = L.Control.extend({
+  options: { position: 'topright' },
+  onAdd: function () {
+    const container = L.DomUtil.create('div');
+
+    const saveBtn = L.DomUtil.create('div', 'custom-button', container);
+    saveBtn.innerHTML = 'Guardar';
+    saveBtn.onclick = () => {
+      const data = drawnItems.toGeoJSON();
+      const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'mapa.geojson';
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+
+    const cancelBtn = L.DomUtil.create('div', 'custom-button', container);
+    cancelBtn.innerHTML = 'Cancelar último';
+    cancelBtn.onclick = () => {
+      const layers = drawnItems.getLayers();
+      if(layers.length>0) drawnItems.removeLayer(layers[layers.length-1]);
+    };
+
+    const printBtn = L.DomUtil.create('div', 'custom-button', container);
+    printBtn.innerHTML = 'Imprimir';
+    printBtn.onclick = () => window.print();
+
+    return container;
+  }
+});
+map.addControl(new CustomControl());
+</script>
+</body>
+</html>
