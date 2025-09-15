@@ -1,100 +1,142 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="UTF-8">
-<title>Mapa Pablo</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
-<style>
-  body { margin:0; padding:0; }
-  #map { height: 100vh; width: 100%; }
-  .leaflet-top.leaflet-right { top: 70px; }
-  .custom-button {
-    background: white; padding: 6px 12px; margin: 2px;
-    border-radius: 4px; cursor: pointer; font-weight: bold;
-    box-shadow: 0 1px 5px rgba(0,0,0,0.65);
-  }
-  .custom-button:hover { background: #f0f0f0; }
-</style>
+  <meta charset="UTF-8">
+  <title>Mapa Pablo</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+  <style>
+    body { margin:0; padding:0; display:flex; font-family: Arial, sans-serif; }
+    #map { height: 100vh; width: 75%; }
+    #info { width: 25%; padding: 10px; background: #f8f8f8; overflow-y: auto; }
+    h2 { margin-top: 0; }
+    label { display:block; margin-top: 10px; }
+    input { width: 90%; padding: 5px; margin-top: 2px; }
+    button { margin-top: 10px; padding: 5px 10px; cursor: pointer; }
+    #addLocation { margin-bottom:10px; }
+  </style>
 </head>
 <body>
-<div id="map"></div>
+  <div id="map"></div>
+  <div id="info">
+    <h2>Información del punto/polígono</h2>
+    <p>Hace click en un elemento para editar sus datos.</p>
+    <button id="addLocation">Agregar ubicación</button>
+    <form id="featureForm" style="display:none;">
+      <label>Circuito:<input type="text" id="circuito"></label>
+      <label>Partido:<input type="text" id="partido"></label>
+      <label>Votos:<input type="number" id="votos"></label>
+      <label>Año de la elección:<input type="number" id="anio"></label>
+      <button type="button" id="saveFeature">Guardar</button>
+      <button type="button" id="cancelEdit">Cancelar</button>
+    </form>
+    <button id="downloadGeoJSON">Descargar GeoJSON</button>
+    <button id="printMap">Imprimir Mapa</button>
+  </div>
 
-<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
-<script>
-const map = L.map('map').setView([-26.8316, -65.2176], 13);
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+  <script>
+    const map = L.map('map').setView([-26.8241, -65.2227], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19, attribution: '&copy; OpenStreetMap'
-}).addTo(map);
+    const featuresCollection = L.featureGroup().addTo(map);
+    let selectedFeature = null;
+    let addingLocation = false;
 
-const drawnItems = new L.FeatureGroup();
-map.addLayer(drawnItems);
+    const defaultStyle = { color: "#3388ff", weight: 2, fillOpacity: 0.2 };
 
-fetch('map.geojson')
-  .then(res => res.json())
-  .then(data => {
-    L.geoJSON(data, {
-      pointToLayer: function(feature, latlng) {
-        return L.circleMarker(latlng, { radius:6, color:'red', fillOpacity:0.8 });
-      },
-      style: { color:'#3388ff', weight:2, fillOpacity:0.2 }
-    }).addTo(drawnItems);
-  });
+    fetch('map.geojson')
+      .then(res => res.json())
+      .then(data => {
+        const geojsonLayer = L.geoJSON(data, { style: defaultStyle }).addTo(featuresCollection);
 
-const drawControl = new L.Control.Draw({
-  position: 'topleft',
-  draw: {
-    polygon:true, rectangle:false, polyline:false, circle:false,
-    marker: true
-  },
-  edit: { featureGroup: drawnItems, remove:true }
-});
-map.addControl(drawControl);
+        data.features.forEach(feature => {
+          if (feature.geometry.type === "Polygon") {
+            const coords = feature.geometry.coordinates[0];
+            let latSum=0,lngSum=0;
+            coords.forEach(c=>{lngSum+=c[0];latSum+=c[1];});
+            const lat=latSum/coords.length;
+            const lng=lngSum/coords.length;
+            const marker = L.circleMarker([lat,lng], { radius:6, color:'red', fillOpacity:0.8 }).addTo(featuresCollection);
+            marker.data = feature.properties || {};
+            marker.on('click', () => editFeature(marker));
+            const layer = geojsonLayer.getLayers().find(l => l.feature === feature);
+            layer.data = feature.properties || {};
+            layer.on('click', () => editFeature(layer));
+          }
+        });
 
-map.on(L.Draw.Event.CREATED, function (event) {
-  let layer = event.layer;
-  if(layer instanceof L.Marker){
-    const latlng = layer.getLatLng();
-    layer = L.circleMarker(latlng, { radius:6, color:'red', fillOpacity:0.8 });
-  }
-  drawnItems.addLayer(layer);
-});
+        map.fitBounds(featuresCollection.getBounds());
+      });
 
-const CustomControl = L.Control.extend({
-  options: { position: 'topright' },
-  onAdd: function () {
-    const container = L.DomUtil.create('div');
+    const drawControl = new L.Control.Draw({
+      edit: { featureGroup: featuresCollection },
+      draw: { polygon:{allowIntersection:false, showArea:true}, rectangle:true, circle:false, polyline:false, marker:false }
+    });
+    map.addControl(drawControl);
 
-    const saveBtn = L.DomUtil.create('div', 'custom-button', container);
-    saveBtn.innerHTML = 'Guardar';
-    saveBtn.onclick = () => {
-      const data = drawnItems.toGeoJSON();
-      const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'mapa.geojson';
+    map.on(L.Draw.Event.CREATED, function(e) {
+      const layer = e.layer;
+      layer.data = { circuito:'', partido:'', votos:0, anio:new Date().getFullYear() };
+      layer.on('click', () => editFeature(layer));
+      featuresCollection.addLayer(layer);
+    });
+
+    function editFeature(layer) {
+      selectedFeature = layer;
+      const form = document.getElementById('featureForm');
+      form.style.display='block';
+      document.getElementById('circuito').value = layer.data.circuito || '';
+      document.getElementById('partido').value = layer.data.partido || '';
+      document.getElementById('votos').value = layer.data.votos || 0;
+      document.getElementById('anio').value = layer.data.anio || new Date().getFullYear();
+    }
+
+    document.getElementById('saveFeature').addEventListener('click', () => {
+      if(!selectedFeature) return;
+      selectedFeature.data.circuito = document.getElementById('circuito').value;
+      selectedFeature.data.partido = document.getElementById('partido').value;
+      selectedFeature.data.votos = parseInt(document.getElementById('votos').value) || 0;
+      selectedFeature.data.anio = parseInt(document.getElementById('anio').value) || new Date().getFullYear();
+      document.getElementById('featureForm').style.display='none';
+      selectedFeature=null;
+    });
+
+    document.getElementById('cancelEdit').addEventListener('click', () => {
+      document.getElementById('featureForm').style.display='none';
+      selectedFeature=null;
+    });
+
+    document.getElementById('addLocation').addEventListener('click', () => {
+      addingLocation = true;
+      map.getContainer().style.cursor='crosshair';
+    });
+
+    map.on('click', function(e) {
+      if(!addingLocation) return;
+      const marker = L.circleMarker(e.latlng, { radius:6, color:'red', fillOpacity:0.8 }).addTo(featuresCollection);
+      marker.data = { circuito:'', partido:'', votos:0, anio:new Date().getFullYear() };
+      marker.on('click', () => editFeature(marker));
+      editFeature(marker);
+      addingLocation=false;
+      map.getContainer().style.cursor='';
+    });
+
+    document.getElementById('downloadGeoJSON').addEventListener('click', () => {
+      const geojson = featuresCollection.toGeoJSON();
+      geojson.features.forEach(f => {
+        const layer = featuresCollection.getLayers().find(l => l.feature === f || l === f);
+        if(layer && layer.data) Object.assign(f.properties, layer.data);
+      });
+      const dataStr="data:text/json;charset=utf-8,"+encodeURIComponent(JSON.stringify(geojson,null,2));
+      const a=document.createElement('a');
+      a.setAttribute('href',dataStr);
+      a.setAttribute('download','map.geojson');
       a.click();
-      URL.revokeObjectURL(url);
-    };
+    });
 
-    const cancelBtn = L.DomUtil.create('div', 'custom-button', container);
-    cancelBtn.innerHTML = 'Cancelar último';
-    cancelBtn.onclick = () => {
-      const layers = drawnItems.getLayers();
-      if(layers.length>0) drawnItems.removeLayer(layers[layers.length-1]);
-    };
-
-    const printBtn = L.DomUtil.create('div', 'custom-button', container);
-    printBtn.innerHTML = 'Imprimir';
-    printBtn.onclick = () => window.print();
-
-    return container;
-  }
-});
-map.addControl(new CustomControl());
-</script>
+    document.getElementById('printMap').addEventListener('click',()=>window.print());
+  </script>
 </body>
 </html>
